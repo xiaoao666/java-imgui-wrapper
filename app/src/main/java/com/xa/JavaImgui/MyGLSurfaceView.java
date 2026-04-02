@@ -7,10 +7,12 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.pm.ConfigurationInfo;
+import android.graphics.Color;
 import android.opengl.GLSurfaceView;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
@@ -18,11 +20,10 @@ import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
-import android.widget.FrameLayout; // 导入 FrameLayout
-
-import java.util.concurrent.LinkedBlockingQueue;
+import android.widget.FrameLayout;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -31,65 +32,29 @@ public class MyGLSurfaceView extends GLSurfaceView {
 
     private static MyGLSurfaceView myGLSurfaceView;
     private static final String TAG = "Mod_Menu";
-    private LinkedBlockingQueue<Integer> unicodeCharacterQueue = new LinkedBlockingQueue<>();
+
     private EditText inputEditText;
     private Context ctx;
-    private String currentText = "";
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
-
+    private boolean isTrackingImGuiTouch = false;
 
     public MyGLSurfaceView(Context context) {
         super(context);
-
         ctx = context;
         myGLSurfaceView = this;
 
         setEGLContextClientVersion(3);
         setEGLConfigChooser(8, 8, 8, 8, 16, 0);
         getHolder().setFormat(TRANSPARENT);
-        setZOrderOnTop(true);
 
-        // 告诉系统，切后台时直接销毁 EGL 上下文
+        // 保持悬浮在游戏上方
+        setZOrderMediaOverlay(true);
+
         setPreserveEGLContextOnPause(false);
-
-        // 【关键修复 1】：解开注释，绑定你写的内部类 GLRenderer！
         setRenderer(new GLRenderer());
-
-        // 确保渲染模式为连续渲染
         setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
     }
-
-
-//    @SuppressLint("ClickableViewAccessibility")
-//    @Override
-//    public boolean onTouchEvent(MotionEvent event) {
-//        super.onTouchEvent(event);
-//
-//        Logger.d(TAG, "onTouchEvent");
-//
-//        NativeMethod.handleTouch(event.getX(), event.getY(), event.getAction());
-//
-//        View rootView = ((Activity) getContext()).getWindow().getDecorView().getRootView();
-//        return dispatchTouchEventToRoot(rootView, event);
-//    }
-//
-//    private boolean dispatchTouchEventToRoot(View rootView, MotionEvent event) {
-//        if (rootView instanceof ViewGroup) {
-//            ViewGroup rootViewGroup = (ViewGroup) rootView;
-//            MotionEvent eventCopy = MotionEvent.obtain(event);
-//
-//            for (int i = 0; i < rootViewGroup.getChildCount(); i++) {
-//                View child = rootViewGroup.getChildAt(i);
-//                if (child != this && child.dispatchTouchEvent(eventCopy))
-//                    return true;
-//            }
-//        }
-//        return false;
-//    }
-
-    // 在类的顶部，定义一个状态变量
-    private boolean isTrackingImGuiTouch = false;
 
     public boolean isInImgui(float x, float y) {
         float[] bounds = NativeMethod.GetImGuiWindowBounds();
@@ -110,28 +75,21 @@ public class MyGLSurfaceView extends GLSurfaceView {
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-
         int action = event.getActionMasked();
 
-        // 核心逻辑 1：只有在手指【刚刚按下】的一瞬间，去判断是否点在了菜单上
         if (action == MotionEvent.ACTION_DOWN) {
-            // 无延迟判定！根据坐标数学计算
             isTrackingImGuiTouch = isInImgui(event.getX(), event.getY());
-            Log.d(TAG, "isInImgui:" + isTrackingImGuiTouch);
         }
 
         if (isTrackingImGuiTouch) {
-            // 如果当前手指是在菜单上按下的，就把事件发给 ImGui 处理
             NativeMethod.handleTouch(event.getX(), event.getY(), event.getAction());
-        }
-
-        // 核心逻辑 2：如果手指不是从菜单上开始按下的，才把事件发给底层游戏
-        if (!isTrackingImGuiTouch) {
+        } else {
             ViewGroup parent = (ViewGroup) getParent();
             if (parent != null) {
                 for (int i = 0; i < parent.getChildCount(); i++) {
                     View child = parent.getChildAt(i);
-                    if (child != this && !(child instanceof EditText)) {
+                    // 防止把事件发给自己或隐藏的输入框
+                    if (child != this && child != inputEditText) {
                         MotionEvent eventCopy = MotionEvent.obtain(event);
                         child.dispatchTouchEvent(eventCopy);
                         eventCopy.recycle();
@@ -140,26 +98,11 @@ public class MyGLSurfaceView extends GLSurfaceView {
             }
         }
 
-        // 核心逻辑 3：手指抬起或取消时，重置状态
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             isTrackingImGuiTouch = false;
         }
 
         return true;
-    }
-
-    private boolean dispatchTouchEventToRoot(View rootView, MotionEvent event) {
-        if (rootView instanceof ViewGroup) {
-            ViewGroup rootViewGroup = (ViewGroup) rootView;
-            MotionEvent eventCopy = MotionEvent.obtain(event);
-
-            for (int i = 0; i < rootViewGroup.getChildCount(); i++) {
-                View child = rootViewGroup.getChildAt(i);
-                if (child != this && child.dispatchTouchEvent(eventCopy))
-                    return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -187,171 +130,180 @@ public class MyGLSurfaceView extends GLSurfaceView {
         }
     }
 
-
-    public static void addKeyboardView() {
-        if (myGLSurfaceView == null) return;
+    // ==========================================
+    // 给 C++ 调用的 UI 控制方法 (仅唤起软键盘)
+    // ==========================================
+    public static void showInputUI() {
+        if (myGLSurfaceView == null || myGLSurfaceView.inputEditText == null) return;
 
         myGLSurfaceView.uiHandler.post(() -> {
-            if (myGLSurfaceView.inputEditText != null) {
-                myGLSurfaceView.inputEditText.setVisibility(View.VISIBLE);
-                myGLSurfaceView.inputEditText.setAlpha(0.01f);
-
-                myGLSurfaceView.inputEditText.requestFocus();
-                myGLSurfaceView.inputEditText.requestFocusFromTouch();
-
-                InputMethodManager imm = (InputMethodManager) myGLSurfaceView.ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (imm != null) {
-                    // 推荐改成 SHOW_IMPLICIT，更兼容
-                    imm.showSoftInput(myGLSurfaceView.inputEditText, InputMethodManager.SHOW_IMPLICIT);
-                    // 或保持原样：imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
-                }
+            myGLSurfaceView.inputEditText.requestFocus();
+            InputMethodManager imm = (InputMethodManager) myGLSurfaceView.ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(myGLSurfaceView.inputEditText, InputMethodManager.SHOW_IMPLICIT);
             }
         });
     }
 
-    public static int pollUnicodeChar() {
-        Integer poll = myGLSurfaceView.unicodeCharacterQueue.poll();
-        if (poll == null) {
-            return 0;
-        }
-        return poll.intValue();
+    public static void hideInputUI() {
+        if (myGLSurfaceView == null || myGLSurfaceView.inputEditText == null) return;
+
+        myGLSurfaceView.uiHandler.post(() -> {
+            // 每次关闭键盘时，清空隐藏输入框的残余内容
+            myGLSurfaceView.inputEditText.setText("");
+            myGLSurfaceView.inputEditText.clearFocus();
+            InputMethodManager imm = (InputMethodManager) myGLSurfaceView.ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(myGLSurfaceView.inputEditText.getWindowToken(), 0);
+            }
+        });
+    }
+
+    private void initHiddenInputUI(Activity activity, ViewGroup rootView) {
+        // 创建隐藏的、专治 UE 的安全输入框
+        inputEditText = new SafeEditText(ctx);
+        inputEditText.setVisibility(View.VISIBLE); // 必须可见才能获取焦点
+        inputEditText.setAlpha(0.001f);            // 肉眼几乎不可见的透明度
+        inputEditText.setBackgroundColor(Color.TRANSPARENT);
+        inputEditText.setTextColor(Color.TRANSPARENT);
+        inputEditText.setFocusable(true);
+        inputEditText.setFocusableInTouchMode(true);
+        inputEditText.setInputType(InputType.TYPE_CLASS_TEXT);
+        inputEditText.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+
+        // 设置为 1x1 像素，藏在角落
+        FrameLayout.LayoutParams editParams = new FrameLayout.LayoutParams(1, 1);
+        editParams.gravity = Gravity.TOP | Gravity.START;
+        rootView.addView(inputEditText, editParams);
+
+        // 监听打字输入，实时发给 C++
+        inputEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (count > 0) {
+                    // 获取刚才新打出的字
+                    String added = s.toString().substring(start, start + count);
+                    NativeMethod.UpdateInputText(added);
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
     }
 
     public static void startMenu(Context ctx) {
-        Logger.d(TAG, "startMenu() called from thread: " + Thread.currentThread().getName());
-        Logger.d(TAG, "startMenu()");
+        if (!supportsOpenGLES3(ctx)) return;
 
-        if (!supportsOpenGLES3(ctx)) {
-            Logger.e(TAG, "This device does not support OpenGL ES 3.0");
-            return;
-        }
-
-        // 如果当前不是主线程，就投递到主线程执行
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            new Handler(Looper.getMainLooper()).post(() -> {
-                startMenu(ctx);  // 递归调用，但因为已经切到主线程，不会无限递归
-            });
+            new Handler(Looper.getMainLooper()).post(() -> startMenu(ctx));
             return;
         }
 
         Activity activity = (Activity) ctx;
-
-        // 获取Activity的内容根视图
         ViewGroup rootView = (ViewGroup) activity.findViewById(android.R.id.content);
 
-        // 实例化 MyGLSurfaceView (构造函数中会自动将 this 赋值给 myGLSurfaceView 静态变量)
         MyGLSurfaceView surfaceView = new MyGLSurfaceView(ctx);
-
-        // 使用 FrameLayout 的 LayoutParams
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         );
         params.gravity = Gravity.TOP | Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL;
-
-        // 设置不获取焦点，让底层游戏仍能接收事件
         surfaceView.setFocusable(false);
         surfaceView.setFocusableInTouchMode(false);
-
-        // 添加 GLSurfaceView 到根视图
         rootView.addView(surfaceView, params);
 
-        // ==========================================
-        // 【核心修复】：精准绑定 Activity 的生命周期
-        // ==========================================
         android.app.Application app = activity.getApplication();
         app.registerActivityLifecycleCallbacks(new android.app.Application.ActivityLifecycleCallbacks() {
             @Override
             public void onActivityPaused(Activity a) {
-                // 当宿主 Activity 刚准备暂停时，立刻暂停我们的 GL 线程！绝不拖延！
-                if (a == activity && myGLSurfaceView != null) {
-                    myGLSurfaceView.onPause();
-                }
+                if (a == activity && myGLSurfaceView != null) myGLSurfaceView.onPause();
             }
-
             @Override
             public void onActivityResumed(Activity a) {
-                // 切回前台时，立刻唤醒 GL 线程
-                if (a == activity && myGLSurfaceView != null) {
-                    myGLSurfaceView.onResume();
-                }
+                if (a == activity && myGLSurfaceView != null) myGLSurfaceView.onResume();
             }
-
             @Override
             public void onActivityDestroyed(Activity a) {
-                // 宿主销毁时，注销监听防内存泄漏
-                if (a == activity) {
-                    app.unregisterActivityLifecycleCallbacks(this);
-                }
+                if (a == activity) app.unregisterActivityLifecycleCallbacks(this);
             }
-
-            // 下面这些必须重写，但空着就行
             @Override public void onActivityCreated(Activity a, android.os.Bundle b) {}
             @Override public void onActivityStarted(Activity a) {}
             @Override public void onActivityStopped(Activity a) {}
             @Override public void onActivitySaveInstanceState(Activity a, android.os.Bundle b) {}
         });
-        // ==========================================
 
-        // 初始化隐藏的输入框
-        myGLSurfaceView.inputEditText = new EditText(ctx);
-        myGLSurfaceView.inputEditText.setVisibility(View.VISIBLE);  // 先 VISIBLE 测试
-        myGLSurfaceView.inputEditText.setAlpha(0.01f);              // 几乎透明
-        myGLSurfaceView.inputEditText.setBackground(null);          // 无背景
-        myGLSurfaceView.inputEditText.setTextColor(0x00000000);     // 文字透明
-
-        myGLSurfaceView.inputEditText.setFocusable(true);
-        myGLSurfaceView.inputEditText.setFocusableInTouchMode(true);
-        myGLSurfaceView.inputEditText.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
-        myGLSurfaceView.inputEditText.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-
-        // 使用 FrameLayout 的 LayoutParams 给 EditText
-        FrameLayout.LayoutParams editParams = new FrameLayout.LayoutParams(
-                1, 1  // 极小尺寸，不挡画面
-        );
-        editParams.gravity = Gravity.BOTTOM | Gravity.END;  // 角落位置
-
-        // 添加 EditText 到根视图
-        rootView.addView(myGLSurfaceView.inputEditText, editParams);
-
-        // 添加TextWatcher监听文字变化
-        myGLSurfaceView.inputEditText.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-                // 检测Backspace/Delete操作
-                if (count > after) {
-                    int deleteCount = count - after;
-                    for (int i = 0; i < deleteCount; i++) {
-                        myGLSurfaceView.unicodeCharacterQueue.offer(Integer.valueOf(8)); // 8 is backspace
-                    }
-                }
-            }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                // 处理文字输入
-                String newText = s.toString();
-                String addedText = newText.substring(start, start + count);
-
-                for (int i = 0; i < addedText.length(); i++) {
-                    char c = addedText.charAt(i);
-                    myGLSurfaceView.unicodeCharacterQueue.offer(Integer.valueOf(c));
-                }
-
-                myGLSurfaceView.currentText = newText;
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) {
-                // 清理EditText内容，避免累积
-                //s.clear();
-            }
-        });
+        // 初始化隐藏输入框
+        myGLSurfaceView.initHiddenInputUI(activity, rootView);
     }
 
     public static boolean supportsOpenGLES3(Context ctx) {
         ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
         ConfigurationInfo configurationInfo = am.getDeviceConfigurationInfo();
         return (configurationInfo.reqGlEsVersion >= 0x30000);
+    }
+
+    // ==========================================
+    // 专治 UE 引擎拦截退格键的安全隐藏输入框
+    // ==========================================
+    public static class SafeEditText extends EditText {
+        public SafeEditText(Context context) {
+            super(context);
+        }
+
+        // 拦截传统的退格物理按键
+        @Override
+        public boolean onKeyPreIme(int keyCode, android.view.KeyEvent event) {
+            if (keyCode == android.view.KeyEvent.KEYCODE_DEL) {
+                if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                    NativeMethod.DeleteInputText(); // 直接通知 C++ 删字
+                }
+                return true; // 消费掉，绝不传给 UE
+            }
+            return super.onKeyPreIme(keyCode, event);
+        }
+
+        @Override
+        public boolean dispatchKeyEventPreIme(android.view.KeyEvent event) {
+            if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_DEL) {
+                if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                    NativeMethod.DeleteInputText();
+                }
+                return true;
+            }
+            return super.dispatchKeyEventPreIme(event);
+        }
+
+        // 拦截输入法的直接删除指令
+        @Override
+        public android.view.inputmethod.InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+            android.view.inputmethod.InputConnection baseConnection = super.onCreateInputConnection(outAttrs);
+            if (baseConnection == null) return null;
+
+            return new android.view.inputmethod.InputConnectionWrapper(baseConnection, true) {
+                @Override
+                public boolean sendKeyEvent(android.view.KeyEvent event) {
+                    if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_DEL) {
+                        if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                            NativeMethod.DeleteInputText();
+                        }
+                        return true;
+                    }
+                    return super.sendKeyEvent(event);
+                }
+
+                @Override
+                public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+                    // 发送对应次数的退格信号给 C++
+                    for (int i = 0; i < beforeLength; i++) {
+                        NativeMethod.DeleteInputText();
+                    }
+                    return true; // 拦截成功
+                }
+            };
+        }
     }
 }

@@ -25,7 +25,10 @@ static ImGuiIO *g_io = nullptr;
 static JavaVM *javaVM = nullptr;
 static jclass myGLSurfaceViewClass = nullptr;
 
-
+jobject g_ActivityInstance = nullptr;
+jobject g_DexClassLoader = nullptr;
+static jmethodID g_showInputUIMethod = nullptr;
+static jmethodID g_hideInputUIMethod = nullptr;
 
 static void renderDemoWindow();
 
@@ -75,6 +78,8 @@ void setKeyboardServiceClass() {
     }
     myGLSurfaceViewClass = (jclass) env->NewGlobalRef(cls);
     LOGI("MyGLSurfaceView class: %p", myGLSurfaceViewClass);
+    g_showInputUIMethod = env->GetStaticMethodID(myGLSurfaceViewClass, "showInputUI", "()V");
+    g_hideInputUIMethod = env->GetStaticMethodID(myGLSurfaceViewClass, "hideInputUI", "()V");
 }
 
 extern "C"
@@ -146,6 +151,23 @@ Java_com_xa_JavaImgui_NativeMethod_onDrawFrame(JNIEnv *env, jclass clazz, jobjec
 
 
     renderDemoWindow();
+
+    {
+        ImGuiIO &io = ImGui::GetIO();
+        static bool WantTextInputLast = false;
+        if (io.WantTextInput && !WantTextInputLast) {
+            JNIEnv *g_Env = nullptr;
+            if (javaVM->AttachCurrentThread(&g_Env, nullptr) == JNI_OK && myGLSurfaceViewClass) {
+                g_Env->CallStaticVoidMethod(myGLSurfaceViewClass, g_showInputUIMethod);
+            }
+        } else if (!io.WantTextInput && WantTextInputLast) {
+            JNIEnv *g_Env = nullptr;
+            if (javaVM->AttachCurrentThread(&g_Env, nullptr) == JNI_OK && myGLSurfaceViewClass) {
+                g_Env->CallStaticVoidMethod(myGLSurfaceViewClass, g_hideInputUIMethod);
+            }
+        }
+        WantTextInputLast = io.WantTextInput;
+    }
 
     ImGui::Render();
     glViewport(0, 0, (int) ImGui::GetIO().DisplaySize.x, (int) ImGui::GetIO().DisplaySize.y);
@@ -255,54 +277,6 @@ Java_com_xa_JavaImgui_NativeMethod_onSurfaceDestroyed(JNIEnv *env, jclass clazz,
 
 
 
-void KeyboardView(){
-    JNIEnv *g_Env = nullptr;
-    jint result = javaVM->AttachCurrentThread(&g_Env, nullptr);
-    if (result != JNI_OK || g_Env == nullptr) {
-        LOGD("Failed to attach thread or obtain JNIEnv, result: %d", result);
-        return;
-    }
-    // Log classpath
-    LOGD("Looking for class in thread...");
-    jmethodID addKeyboardView = g_Env->GetStaticMethodID(myGLSurfaceViewClass, "addKeyboardView", "()V");
-    if (addKeyboardView == nullptr) {
-        LOGD("Failed to find method");
-    } else {
-        LOGD("Method found: %p", addKeyboardView);
-        g_Env->CallStaticVoidMethod(myGLSurfaceViewClass, addKeyboardView);
-    }
-}
-
-
-void PollUnicodeChars()
-{
-    JNIEnv *g_Env = nullptr;
-    jint result = javaVM->AttachCurrentThread(&g_Env, nullptr);
-    if (result != JNI_OK || g_Env == nullptr) {
-        LOGD("Failed to attach thread or obtain JNIEnv, result: %d", result);
-        return;
-    }
-    // Log classpath
-    //LOGD("Looking for class in thread...");
-    jmethodID pollUnicodeChar = g_Env->GetStaticMethodID(myGLSurfaceViewClass, "pollUnicodeChar", "()I");
-    if (pollUnicodeChar == nullptr) {
-        LOGD("Failed to find method");
-    } else {
-        //LOGD("Method found: %p", pollUnicodeChar);
-        ImGuiIO & io = ImGui::GetIO();
-        jint c;
-        while ((c = g_Env->CallStaticIntMethod(myGLSurfaceViewClass, pollUnicodeChar)) != 0){
-            if (c == 8){
-                io.AddKeyEvent(ImGuiKey_Backspace, true);
-                usleep(1000);
-                io.AddKeyEvent(ImGuiKey_Backspace, false);
-            } else{
-                io.AddInputCharacter(c);
-            }
-        }
-    }
-}
-
 char input_text[128] = {};
 
 static void renderDemoWindow() {
@@ -347,17 +321,7 @@ static void renderDemoWindow() {
 
         ImGui::End();
 
-        {
-            PollUnicodeChars();
 
-            static bool WantTextInputLast = false;
-            if (io.WantTextInput && !WantTextInputLast) {
-                KeyboardView();
-            } else if (!io.WantTextInput && WantTextInputLast) {
-                KeyboardView();
-            }
-            WantTextInputLast = io.WantTextInput;
-        }
 
     }
 

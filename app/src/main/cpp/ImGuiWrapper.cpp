@@ -186,18 +186,21 @@ Java_com_xa_JavaImgui_NativeMethod_GetImGuiWindowBounds(JNIEnv *env, jclass claz
     ImGuiContext& g = *GImGui;
     int validWindowCount = 0;
 
-    // 1. 第一遍遍历：统计真正需要代理触摸的窗口
+    // 1. 第一遍遍历：统计真正需要独立代理方块的【根窗口】
     for (int i = 0; i < g.Windows.Size; ++i) {
         ImGuiWindow* window = g.Windows[i];
 
-        if (!window->Active || window->Hidden) continue;
+        // 【终极修复：跨线程竞态防抖】！
+        // 只要当前活跃 (Active) 或者上一帧活跃 (WasActive)，都算数！
+        // 完美免疫 Java 异步读取时正好撞上 ImGui 重置状态的零点几毫秒真空期！
+        if (!window->Active && !window->WasActive) continue;
+
+        if (window->Hidden) continue;
         if (window->Size.x <= 0 || window->Size.y <= 0) continue;
 
-        // 【核心绝杀】：过滤掉不需要交互的幽灵窗口！
-        // 如果这个窗口被设置为“无视输入 (NoInputs)”，直接不要它
+        // 过滤不需要触摸的窗口、子窗口、提示框和调试窗口
         if (window->Flags & ImGuiWindowFlags_NoInputs) continue;
-
-        // 过滤掉原生的 Tooltip 提示框和兜底的 Debug 窗口
+        if (window->Flags & ImGuiWindowFlags_ChildWindow) continue;
         if (strstr(window->Name, "Tooltip") != nullptr) continue;
         if (strstr(window->Name, "Debug##Default") != nullptr) continue;
 
@@ -217,13 +220,16 @@ Java_com_xa_JavaImgui_NativeMethod_GetImGuiWindowBounds(JNIEnv *env, jclass claz
 
     int index = 0;
 
-    // 2. 第二遍遍历：写入坐标（过滤条件必须和上面一模一样！）
+    // 2. 第二遍遍历：写入坐标
     for (int i = 0; i < g.Windows.Size; ++i) {
         ImGuiWindow* window = g.Windows[i];
 
-        if (!window->Active || window->Hidden) continue;
+        // 【条件必须和上面一模一样】
+        if (!window->Active && !window->WasActive) continue;
+        if (window->Hidden) continue;
         if (window->Size.x <= 0 || window->Size.y <= 0) continue;
         if (window->Flags & ImGuiWindowFlags_NoInputs) continue;
+        if (window->Flags & ImGuiWindowFlags_ChildWindow) continue;
         if (strstr(window->Name, "Tooltip") != nullptr) continue;
         if (strstr(window->Name, "Debug##Default") != nullptr) continue;
 
@@ -299,8 +305,8 @@ char input_text[128] = {};
 
 static void renderDemoWindow() {
     // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-//    if (show_demo_window)
-//        ImGui::ShowDemoWindow(&show_demo_window);
+    if (show_demo_window)
+        ImGui::ShowDemoWindow(&show_demo_window);
 
     // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
     {
@@ -345,14 +351,14 @@ static void renderDemoWindow() {
 
 
     // 3. Show another simple window.
-//    if (show_another_window) {
-//        ImGui::Begin("Another Window",
-//                     &show_another_window); // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-//        ImGui::Text("Hello from another window!");
-//        if (ImGui::Button("Close Me"))
-//            show_another_window = false;
-//        ImGui::End();
-//    }
+    if (show_another_window) {
+        ImGui::Begin("Another Window",
+                     &show_another_window); // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
+        ImGui::Text("Hello from another window!");
+        if (ImGui::Button("Close Me"))
+            show_another_window = false;
+        ImGui::End();
+    }
 }
 
 

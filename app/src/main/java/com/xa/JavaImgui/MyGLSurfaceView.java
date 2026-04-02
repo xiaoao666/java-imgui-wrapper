@@ -108,62 +108,71 @@ public class MyGLSurfaceView extends GLSurfaceView {
         uiHandler.post(sRegionSyncRunnable);
     }
 
+    // ==========================================
+    // 【终极修复 2】：物理流放机制，彻底解决残留卡死
+    // ==========================================
     private void syncRegionInputWindows() {
         if (sWindowManager == null || myGLSurfaceView == null) return;
 
         try {
             float[] bounds = NativeMethod.GetImGuiWindowBounds();
             if (bounds == null || bounds.length < 4) {
-                clearInputProxyWindows();
+                for (int i = 0; i < sInputProxyViews.size(); i++) {
+                    InputProxyView proxyView = sInputProxyViews.get(i);
+                    if (proxyView != null && proxyView.getVisibility() != View.GONE) {
+                        proxyView.setVisibility(View.GONE);
+                    }
+                }
                 return;
             }
 
-            // 【添加日志】打印原始bounds数据
-            Log.d(TAG, "=== 原始ImGui窗口边界数据 ===");
-            for (int i = 0; i < bounds.length / 4; i++) {
-                Log.d(TAG, String.format("窗口[%d]: left=%.2f, top=%.2f, right=%.2f, bottom=%.2f",
-                        i, bounds[i*4], bounds[i*4+1], bounds[i*4+2], bounds[i*4+3]));
-            }
-
-            // 【核心解封 1】：将原本 DEX 里写死的 8 个配额，提升到 32 个！
-            // 足以应对任何复杂的下拉框、多级弹窗、ColorPicker 调色盘
             int windowCount = Math.min(bounds.length / 4, 32);
-
             while (sInputProxyViews.size() < windowCount) {
                 sInputProxyViews.add(null);
             }
 
-            for (int i = 0; i < windowCount; i++) {
-                // 增加 20 像素防误触边缘，包裹住人类肉指的误差
-                int padding = 20;
-                int left = (int) bounds[i * 4] - padding;
-                int top = (int) bounds[i * 4 + 1] - padding;
-                int right = (int) bounds[i * 4 + 2] + padding;
-                int bottom = (int) bounds[i * 4 + 3] + padding;
-                int width = right - left;
-                int height = bottom - top;
+            // 【核心修复】：使用有效窗口索引 validIndex
+            // 只有真正的菜单窗口，才分配并更新代理方块
+            int validIndex = 0;
 
-                if (width <= 0 || height <= 0) {
-                    removeInputProxyWindowAt(i);
+            for (int i = 0; i < windowCount; i++) {
+                // 1. 先获取原始坐标
+                float rawLeft = bounds[i * 4];
+                float rawTop = bounds[i * 4 + 1];
+                float rawRight = bounds[i * 4 + 2];
+                float rawBottom = bounds[i * 4 + 3];
+
+                float rawWidth = rawRight - rawLeft;
+                float rawHeight = rawBottom - rawTop;
+
+                // 2. 【绝杀幽灵窗口】：在加 Padding 之前进行严格审查！
+                // 如果原始宽高小于等于 1 像素，或者死死卡在 (0,0) 位置，绝对是垃圾窗口，直接跳过！
+                if (rawWidth <= 1 || rawHeight <= 1 || (rawLeft == 0 && rawTop == 0)) {
                     continue;
                 }
 
-                InputProxyView proxyView = sInputProxyViews.get(i);
+                // 3. 确认是真窗口后，再加防误触 Padding
+                int padding = 20;
+                int left = (int) rawLeft - padding;
+                int top = (int) rawTop - padding;
+                int right = (int) rawRight + padding;
+                int bottom = (int) rawBottom + padding;
+                int width = right - left;
+                int height = bottom - top;
+
+                // 4. 分配到有效的代理方块池中
+                InputProxyView proxyView = sInputProxyViews.get(validIndex);
                 if (proxyView == null) {
                     proxyView = new InputProxyView(ctx);
+                     proxyView.setBackgroundColor(Color.argb(120, 255, 0, 0)); // 调试红底
+                    sInputProxyViews.set(validIndex, proxyView);
 
-                    // 【开启 Debug 上帝视角】：把原本透明的方块涂成半透明红色！
-                    // 编译运行后，你会看到屏幕上有一个个红色的方块在追着你的 ImGui 菜单跑。
-                    proxyView.setBackgroundColor(Color.argb(120, 255, 0, 0));
-                    sInputProxyViews.set(i, proxyView);
-
-                    // 【核心解封 2】：彻底弃用玄学数字 8520456，使用清晰的组合 Flags
-                    // 确保哪怕游戏全屏/有刘海，代理小窗口也能和 ImGui 在同一坐标系！
                     int proxyFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                             | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS; // 免疫刘海和状态栏偏移！
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                            | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
 
                     WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                             width, height, sWmParams.type, proxyFlags, TRANSLUCENT);
@@ -174,6 +183,9 @@ public class MyGLSurfaceView extends GLSurfaceView {
 
                     sWindowManager.addView(proxyView, params);
                 } else {
+                    if (proxyView.getVisibility() != View.VISIBLE) {
+                        proxyView.setVisibility(View.VISIBLE);
+                    }
                     WindowManager.LayoutParams params = (WindowManager.LayoutParams) proxyView.getLayoutParams();
                     if (params.x != left || params.y != top || params.width != width || params.height != height) {
                         params.x = left;
@@ -183,17 +195,23 @@ public class MyGLSurfaceView extends GLSurfaceView {
                         sWindowManager.updateViewLayout(proxyView, params);
                     }
                 }
+
+                // 有效窗口数量+1
+                validIndex++;
             }
 
-            while (sInputProxyViews.size() > windowCount) {
-                removeInputProxyWindowAt(sInputProxyViews.size() - 1);
+            // 5. 【干净利落的收尾】：把 validIndex 之后的所有代理方块，全部隐藏！
+            for (int i = validIndex; i < sInputProxyViews.size(); i++) {
+                InputProxyView proxyView = sInputProxyViews.get(i);
+                if (proxyView != null && proxyView.getVisibility() != View.GONE) {
+                    proxyView.setVisibility(View.GONE);
+                }
             }
 
         } catch (Exception e) {
             Log.e(TAG, "Sync Proxy Windows Error: " + e.getMessage());
         }
     }
-
     private void removeInputProxyWindowAt(int index) {
         if (index >= 0 && index < sInputProxyViews.size()) {
             View view = sInputProxyViews.get(index);

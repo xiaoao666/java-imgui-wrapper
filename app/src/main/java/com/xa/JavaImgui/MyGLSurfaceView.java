@@ -164,7 +164,7 @@ public class MyGLSurfaceView extends GLSurfaceView {
                 InputProxyView proxyView = sInputProxyViews.get(validIndex);
                 if (proxyView == null) {
                     proxyView = new InputProxyView(ctx);
-                     proxyView.setBackgroundColor(Color.argb(120, 255, 0, 0)); // 调试红底
+                     //proxyView.setBackgroundColor(Color.argb(120, 255, 0, 0)); // 调试红底
                     sInputProxyViews.set(validIndex, proxyView);
 
                     int proxyFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -258,13 +258,18 @@ public class MyGLSurfaceView extends GLSurfaceView {
 
             MyGLSurfaceView surfaceView = new MyGLSurfaceView(ctx);
 
-            // DEX 原汁原味：131848 再加上 FLAG_NOT_TOUCHABLE (16)
+            int flags = WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+
             // 让全屏的主绘制画布变成绝对幽灵，事件 100% 漏给 UE 引擎
             sWmParams = new WindowManager.LayoutParams(
                     dm.widthPixels,
                     dm.heightPixels,
                     WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
-                    131848 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    flags,
                     TRANSLUCENT
             );
             sWmParams.gravity = Gravity.TOP | Gravity.LEFT;

@@ -32,12 +32,16 @@
         @Override
         protected void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
-
-            Logger.d(TAG, "onCreate");
-
-
             setContentView(R.layout.activity_main);
-            MyGLSurfaceView.startMenu(this);
+
+            // 不要直接调用 startMenu
+            // 使用 root view 的 post 方法，确保在窗口附加到 WindowManager 后执行
+            getWindow().getDecorView().post(new Runnable() {
+                @Override
+                public void run() {
+                    MyGLSurfaceView.startMenu(MainActivity.this);
+                }
+            });
         }
 
 

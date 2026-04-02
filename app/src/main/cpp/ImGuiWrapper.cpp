@@ -179,25 +179,36 @@ Java_com_xa_JavaImgui_NativeMethod_onDrawFrame(JNIEnv *env, jclass clazz, jobjec
 extern "C"
 JNIEXPORT jfloatArray JNICALL
 Java_com_xa_JavaImgui_NativeMethod_GetImGuiWindowBounds(JNIEnv *env, jclass clazz) {
-    // 【关键修复】：如果 ImGui 未初始化，或者上下文已经被销毁，直接返回空数组
     if (!g_Initialized || ImGui::GetCurrentContext() == nullptr) {
         return env->NewFloatArray(0);
     }
 
-    int activeWindowCount = 0;
-    for (int i = 0; i < ImGui::GetCurrentContext()->Windows.Size; ++i) {
-        if (ImGui::GetCurrentContext()->Windows[i]->Active) {
-            activeWindowCount++;
-        }
+    ImGuiContext& g = *GImGui;
+    int validWindowCount = 0;
+
+    // 1. 第一遍遍历：统计真正需要代理触摸的窗口
+    for (int i = 0; i < g.Windows.Size; ++i) {
+        ImGuiWindow* window = g.Windows[i];
+
+        if (!window->Active || window->Hidden) continue;
+        if (window->Size.x <= 0 || window->Size.y <= 0) continue;
+
+        // 【核心绝杀】：过滤掉不需要交互的幽灵窗口！
+        // 如果这个窗口被设置为“无视输入 (NoInputs)”，直接不要它
+        if (window->Flags & ImGuiWindowFlags_NoInputs) continue;
+
+        // 过滤掉原生的 Tooltip 提示框和兜底的 Debug 窗口
+        if (strstr(window->Name, "Tooltip") != nullptr) continue;
+        if (strstr(window->Name, "Debug##Default") != nullptr) continue;
+
+        validWindowCount++;
     }
 
-    if (activeWindowCount == 0) {
-        jfloatArray bounds = env->NewFloatArray(0);
-        return bounds;
+    if (validWindowCount == 0) {
+        return env->NewFloatArray(0);
     }
 
-    // 每个窗口4个float值，总共 activeWindowCount * 4 个float
-    int totalFloats = activeWindowCount * 4;
+    int totalFloats = validWindowCount * 4;
     jfloatArray result = env->NewFloatArray(totalFloats);
     if (result == nullptr) return nullptr;
 
@@ -205,14 +216,21 @@ Java_com_xa_JavaImgui_NativeMethod_GetImGuiWindowBounds(JNIEnv *env, jclass claz
     if (elements == nullptr) return nullptr;
 
     int index = 0;
-    for (int i = 0; i < ImGui::GetCurrentContext()->Windows.Size; ++i) {
-        ImGuiWindow* window = ImGui::GetCurrentContext()->Windows[i];
-        if (window->Active) {
-            elements[index++] = window->Pos.x;
-            elements[index++] = window->Pos.y;
-            elements[index++] = window->Pos.x + window->Size.x;
-            elements[index++] = window->Pos.y + window->Size.y;
-        }
+
+    // 2. 第二遍遍历：写入坐标（过滤条件必须和上面一模一样！）
+    for (int i = 0; i < g.Windows.Size; ++i) {
+        ImGuiWindow* window = g.Windows[i];
+
+        if (!window->Active || window->Hidden) continue;
+        if (window->Size.x <= 0 || window->Size.y <= 0) continue;
+        if (window->Flags & ImGuiWindowFlags_NoInputs) continue;
+        if (strstr(window->Name, "Tooltip") != nullptr) continue;
+        if (strstr(window->Name, "Debug##Default") != nullptr) continue;
+
+        elements[index++] = window->Pos.x;
+        elements[index++] = window->Pos.y;
+        elements[index++] = window->Pos.x + window->Size.x;
+        elements[index++] = window->Pos.y + window->Size.y;
     }
 
     env->ReleaseFloatArrayElements(result, elements, 0);
